@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <exception>
 #include <map>
+#include <memory>
 #include <set>
 #include <stdint.h>
 #include <string>
@@ -158,17 +159,18 @@ extern CScript COINBASE_FLAGS;
 extern CCriticalSection cs_main;
 extern CBlockPolicyEstimator feeEstimator;
 extern CTxMemPool mempool;
+extern std::atomic_bool g_is_mempool_loaded;
 typedef std::unordered_map<uint256, CBlockIndex*, BlockHasher> BlockMap;
 extern BlockMap& mapBlockIndex;
 extern uint64_t nLastBlockTx;
 extern uint64_t nLastBlockWeight;
 extern const std::string strMessageMagic;
-extern CWaitableCriticalSection csBestBlock;
-extern CConditionVariable cvBlockChange;
+extern CWaitableCriticalSection g_best_block_mutex;
+extern CConditionVariable g_best_block_cv;
+extern uint256 g_best_block;
 extern std::atomic_bool fImporting;
 extern std::atomic_bool fReindex;
 extern int nScriptCheckThreads;
-extern bool fTxIndex;
 extern bool fIsBareMultisigStd;
 extern bool fRequireStandard;
 extern bool fCheckBlockIndex;
@@ -231,7 +233,8 @@ static const uint64_t MIN_DISK_SPACE_FOR_BLOCK_FILES = 550 * 1024 * 1024;
  * Note that we guarantee that either the proof-of-work is valid on pblock, or
  * (and possibly also) BlockChecked will have been called.
  * 
- * Call without cs_main held.
+ * May not be called with cs_main held. May not be called in a
+ * validationinterface callback.
  *
  * @param[in]   pblock  The block we want to process.
  * @param[in]   fForceProcessing Process this block even if unrequested; used for non-network block sources and whitelisted peers.
@@ -243,7 +246,8 @@ bool ProcessNewBlock(const CChainParams& chainparams, const std::shared_ptr<cons
 /**
  * Process incoming block headers.
  *
- * Call without cs_main held.
+ * May not be called with cs_main held. May not be called in a
+ * validationinterface callback.
  *
  * @param[in]  block The block headers themselves
  * @param[out] state This may be set to an Error state if any error occurred processing them
@@ -254,7 +258,7 @@ bool ProcessNewBlock(const CChainParams& chainparams, const std::shared_ptr<cons
 bool ProcessNewBlockHeaders(const std::vector<CBlockHeader>& block, CValidationState& state, const CChainParams& chainparams, const CBlockIndex** ppindex=nullptr, CBlockHeader *first_invalid=nullptr);
 
 /** Check whether enough disk space is available for an incoming block */
-bool CheckDiskSpace(uint64_t nAdditionalBytes = 0);
+bool CheckDiskSpace(uint64_t nAdditionalBytes = 0, bool blocks_dir = false);
 /** Open a block file (blk?????.dat) */
 FILE* OpenBlockFile(const CDiskBlockPos &pos, bool fReadOnly = false);
 /** Translation to a filesystem path */
@@ -276,7 +280,12 @@ void ThreadScriptCheck();
 bool IsInitialBlockDownload();
 /** Retrieve a transaction (from memory pool, or from disk, if possible) */
 bool GetTransaction(const uint256& hash, CTransactionRef& tx, const Consensus::Params& params, uint256& hashBlock, bool fAllowSlow = false, CBlockIndex* blockIndex = nullptr);
-/** Find the best known block, and make it the tip of the block chain */
+/**
+ * Find the best known block, and make it the tip of the block chain
+ *
+ * May not be called with cs_main held. May not be called in a
+ * validationinterface callback.
+ */
 bool ActivateBestChain(CValidationState& state, const CChainParams& chainparams, std::shared_ptr<const CBlock> pblock = std::shared_ptr<const CBlock>());
 CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams);
 
@@ -307,7 +316,7 @@ void PruneBlockFilesManual(int nManualPruneHeight);
  * plTxnReplaced will be appended to with all transactions replaced from mempool **/
 bool AcceptToMemoryPool(CTxMemPool& pool, CValidationState &state, const CTransactionRef &tx,
                         bool* pfMissingInputs, std::list<CTransactionRef>* plTxnReplaced,
-                        bool bypass_limits, const CAmount nAbsurdFee);
+                        bool bypass_limits, const CAmount nAbsurdFee, bool test_accept=false);
 
 /** Convert CValidationState to a human-readable message for logging */
 std::string FormatStateMessage(const CValidationState &state);
@@ -396,6 +405,8 @@ void InitScriptExecutionCache();
 /** Functions for disk access for blocks */
 bool ReadBlockFromDisk(CBlock& block, const CDiskBlockPos& pos, const Consensus::Params& consensusParams);
 bool ReadBlockFromDisk(CBlock& block, const CBlockIndex* pindex, const Consensus::Params& consensusParams);
+bool ReadRawBlockFromDisk(std::vector<uint8_t>& block, const CDiskBlockPos& pos, const CMessageHeader::MessageStartChars& message_start);
+bool ReadRawBlockFromDisk(std::vector<uint8_t>& block, const CBlockIndex* pindex, const CMessageHeader::MessageStartChars& message_start);
 
 /** Functions for validating blocks and updating the block tree */
 
@@ -408,10 +419,13 @@ bool TestBlockValidity(CValidationState& state, const CChainParams& chainparams,
 /** Check whether witness commitments are required for block. */
 bool IsWitnessEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params);
 
+/** Check whether NULLDUMMY (BIP 147) has activated. */
+bool IsNullDummyEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params);
+
 /** When there are blocks in the active chain with missing data, rewind the chainstate and remove them from the block index */
 bool RewindBlockIndex(const CChainParams& params);
 
-/** Update uncommitted block structures (currently: only the witness nonce). This is safe for submitted blocks. */
+/** Update uncommitted block structures (currently: only the witness reserved value). This is safe for submitted blocks. */
 void UpdateUncommittedBlockStructures(CBlock& block, const CBlockIndex* pindexPrev, const Consensus::Params& consensusParams);
 
 /** Produce the necessary coinbase commitment for a block (modifies the hash, don't call for mined blocks). */
@@ -428,10 +442,21 @@ public:
 /** Replay blocks that aren't fully applied to the database. */
 bool ReplayBlocks(const CChainParams& params, CCoinsView* view);
 
+inline CBlockIndex* LookupBlockIndex(const uint256& hash)
+{
+    AssertLockHeld(cs_main);
+    BlockMap::const_iterator it = mapBlockIndex.find(hash);
+    return it == mapBlockIndex.end() ? nullptr : it->second;
+}
+
 /** Find the last common block between the parameter chain and a locator. */
 CBlockIndex* FindForkInGlobalIndex(const CChain& chain, const CBlockLocator& locator);
 
-/** Mark a block as precious and reorganize. */
+/** Mark a block as precious and reorganize.
+ *
+ * May not be called with cs_main held. May not be called in a
+ * validationinterface callback.
+ */
 bool PreciousBlock(CValidationState& state, const CChainParams& params, CBlockIndex *pindex);
 
 /** Mark a block as invalid. */
@@ -482,5 +507,11 @@ bool DumpMempool();
 
 /** Load the mempool from disk. */
 bool LoadMempool();
+
+//! Check whether the block associated with this index entry is pruned or not.
+inline bool IsBlockPruned(const CBlockIndex* pblockindex)
+{
+    return (fHavePruned && !(pblockindex->nStatus & BLOCK_HAVE_DATA) && pblockindex->nTx > 0);
+}
 
 #endif // BITCOIN_VALIDATION_H

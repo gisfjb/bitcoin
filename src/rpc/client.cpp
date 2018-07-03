@@ -38,14 +38,20 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "sendtoaddress", 5 , "replaceable" },
     { "sendtoaddress", 6 , "conf_target" },
     { "settxfee", 0, "amount" },
+    { "sethdseed", 0, "newkeypool" },
     { "getreceivedbyaddress", 1, "minconf" },
     { "getreceivedbyaccount", 1, "minconf" },
+    { "getreceivedbylabel", 1, "minconf" },
     { "listreceivedbyaddress", 0, "minconf" },
     { "listreceivedbyaddress", 1, "include_empty" },
     { "listreceivedbyaddress", 2, "include_watchonly" },
+    { "listreceivedbyaddress", 3, "address_filter" },
     { "listreceivedbyaccount", 0, "minconf" },
     { "listreceivedbyaccount", 1, "include_empty" },
     { "listreceivedbyaccount", 2, "include_watchonly" },
+    { "listreceivedbylabel", 0, "minconf" },
+    { "listreceivedbylabel", 1, "include_empty" },
+    { "listreceivedbylabel", 2, "include_watchonly" },
     { "getbalance", 1, "minconf" },
     { "getbalance", 2, "include_watchonly" },
     { "getblockhash", 0, "height" },
@@ -94,7 +100,12 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "decoderawtransaction", 1, "iswitness" },
     { "signrawtransaction", 1, "prevtxs" },
     { "signrawtransaction", 2, "privkeys" },
+    { "signrawtransactionwithkey", 1, "privkeys" },
+    { "signrawtransactionwithkey", 2, "prevtxs" },
+    { "signrawtransactionwithwallet", 1, "prevtxs" },
     { "sendrawtransaction", 1, "allowhighfees" },
+    { "testmempoolaccept", 0, "rawtxs" },
+    { "testmempoolaccept", 1, "allowhighfees" },
     { "combinerawtransaction", 0, "txs" },
     { "fundrawtransaction", 1, "options" },
     { "fundrawtransaction", 2, "iswitness" },
@@ -111,10 +122,11 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "importmulti", 1, "options" },
     { "verifychain", 0, "checklevel" },
     { "verifychain", 1, "nblocks" },
+    { "getblockstats", 0, "hash_or_height" },
+    { "getblockstats", 1, "stats" },
     { "pruneblockchain", 0, "height" },
     { "keypoolrefill", 0, "newsize" },
     { "getrawmempool", 0, "verbose" },
-    { "estimatefee", 0, "nblocks" },
     { "estimatesmartfee", 0, "conf_target" },
     { "estimaterawfee", 0, "conf_target" },
     { "estimaterawfee", 1, "threshold" },
@@ -213,7 +225,7 @@ UniValue RPCConvertNamedValues(const std::string &strMethod, const std::vector<s
     UniValue params(UniValue::VOBJ);
 
     for (const std::string &s: strParams) {
-        size_t pos = s.find("=");
+        size_t pos = s.find('=');
         if (pos == std::string::npos) {
             throw(std::runtime_error("No '=' in named argument '"+s+"', this needs to be present for every argument (even if it is empty)"));
         }

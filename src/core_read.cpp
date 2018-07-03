@@ -33,14 +33,14 @@ CScript ParseScript(const std::string& s)
             if (op < OP_NOP && op != OP_RESERVED)
                 continue;
 
-            const char* name = GetOpName((opcodetype)op);
+            const char* name = GetOpName(static_cast<opcodetype>(op));
             if (strcmp(name, "OP_UNKNOWN") == 0)
                 continue;
             std::string strName(name);
-            mapOpNames[strName] = (opcodetype)op;
+            mapOpNames[strName] = static_cast<opcodetype>(op);
             // Convenience: OP_ADD and just ADD are both recognized:
             boost::algorithm::replace_first(strName, "OP_", "");
-            mapOpNames[strName] = (opcodetype)op;
+            mapOpNames[strName] = static_cast<opcodetype>(op);
         }
     }
 
@@ -88,7 +88,7 @@ CScript ParseScript(const std::string& s)
 }
 
 // Check that all of the input and output scripts of a transaction contains valid opcodes
-bool CheckTxScriptsSanity(const CMutableTransaction& tx)
+static bool CheckTxScriptsSanity(const CMutableTransaction& tx)
 {
     // Check input scripts for non-coinbase txs
     if (!CTransaction(tx).IsCoinBase()) {
@@ -158,14 +158,6 @@ bool DecodeHexBlk(CBlock& block, const std::string& strHexBlk)
     }
 
     return true;
-}
-
-uint256 ParseHashUV(const UniValue& v, const std::string& strName)
-{
-    std::string strHex;
-    if (v.isStr())
-        strHex = v.getValStr();
-    return ParseHashStr(strHex, strName);  // Note: ParseHashStr("") throws a runtime_error
 }
 
 uint256 ParseHashStr(const std::string& strHex, const std::string& strName)
